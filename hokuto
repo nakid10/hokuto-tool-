@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>北斗 ハイエナ管理（なな鉄基準・v3.1 iPhone対応）</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial;
+    background:#111; color:#fff; padding:12px; }
+  .tabbar{display:flex; gap:8px; margin-bottom:12px;}
+  .tabbar button{flex:1; padding:10px; border-radius:12px; border:none; background:#2a2a2a; color:#fff; font-weight:700;}
+  .tabbar button.active{background:#4caf50; color:#000;}
+  .card { background:#1e1e1e; border-radius:14px; padding:14px; margin-bottom:12px; }
+  label{display:block; margin:8px 0 6px;}
+  input, select, button, textarea{width:100%; padding:10px; border-radius:10px; border:none; margin-bottom:10px;}
+  button.primary{background:#4caf50; color:#000; font-weight:800;}
+  button.ghost{background:#2a2a2a; color:#fff; font-weight:700;}
+  button.danger{background:#b71c1c; color:#fff; font-weight:800;}
+  .row{margin:6px 0;}
+  .big{font-size:1.25em; font-weight:800;}
+  .rank{font-size:1.6em; font-weight:900; margin-top:10px;}
+  .muted{opacity:.85; font-size:.92em; line-height:1.45;}
+  .pill{display:inline-block; padding:3px 8px; border-radius:999px; background:#2a2a2a; margin-left:6px; font-size:.85em;}
+  .sep{height:1px; background:#2b2b2b; margin:12px 0;}
+  .kpi{display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;}
+  .kpi .box{background:#161616; border:1px solid #2b2b2b; border-radius:14px; padding:12px;}
+  .kpi .t{font-size:.9em; opacity:.85; margin-bottom:6px;}
+  .kpi .v{font-size:1.25em; font-weight:900;}
+  table{width:100%; border-collapse:collapse; font-size:.9em;}
+  th,td{border-bottom:1px solid #2b2b2b; padding:8px 6px; text-align:left; vertical-align:top;}
+  th{opacity:.85;}
+  .actions{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;}
+  .actions button{width:auto; flex:1; min-width:130px;}
+  .inline{display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .inline button{width:auto; margin:0;}
+</style>
+</head>
+<body>
+
+<div class="tabbar">
+  <button id="tabJudge" class="active">判別</button>
+  <button id="tabRun">稼働結果</button>
+  <button id="tabSummary">累計</button>
+</div>
+
+<div id="judge" class="card">
+  <label>現在ゲーム数（サブ液晶）</label>
+  <input id="g" type="number" placeholder="例：720" />
+
+  <label>交換率</label>
+  <select id="rateMode">
+    <option value="eq">等価（50貸し/50交換）</option>
+    <option value="ne">非等価（46貸し/52交換）</option>
+  </select>
+
+  <div class="kpi">
+    <div class="box">
+      <div class="t">Sライン（機械割%）</div>
+      <input id="sLine" type="number" step="0.1" value="105.0" readonly />
+    </div>
+    <div class="box">
+      <div class="t">Aライン（機械割%）</div>
+      <input id="aLine" type="number" step="0.1" value="103.0" readonly />
+    </div>
+  </div>
+
+  <label>コイン持ち（G/50枚）※追加投資の概算に使用</label>
+  <input id="coinHold" type="number" step="0.1" value="34.7" readonly />
+
+  <button id="btnCalc" class="primary">判定する（計算のみ）</button>
+
+  <div id="startWrap" style="display:none;">
+    <button id="btnStart" class="ghost">この台で稼働する（今の計算結果で開始）</button>
+  </div>
+
+  <div id="judgeOut"></div>
+  <div id="judgeRank" class="rank"></div>
+  <div id="judgeNote" class="muted"></div>
+</div>
+
+<div id="run" class="card" style="display:none;">
+  <div id="pendingInfo" class="muted"></div>
+  <div class="sep"></div>
+
+  <label>投資金額（円）</label>
+  <input id="investYen" type="number" placeholder="例：18000" />
+
+  <label>回収メダル（枚）</label>
+  <input id="returnCoins" type="number" placeholder="例：850" />
+
+  <div class="actions">
+    <button id="btnSaveResult" class="primary">結果を保存</button>
+    <button id="btnClearPending" class="danger">保留を破棄</button>
+  </div>
+
+  <div id="runOut" class="muted"></div>
+</div>
+
+<div id="summary" class="card" style="display:none;">
+  <div id="summaryOut"></div>
+  <div class="sep"></div>
+  <div class="actions">
+    <button id="btnExport" class="ghost">履歴をJSONで表示（コピー用）</button>
+    <button id="btnClearAll" class="danger">全履歴削除</button>
+  </div>
+</div>
+
+<script>
+/** ====== データ ====== */
+const TABLE = [
+  { g:   0, tenjoRatePct:  3.82, hitDen: 383, invEqYen: 11049, evEqYen: -996, ev56Yen: -2073 },
+  { g:  50, tenjoRatePct:  4.33, hitDen: 381, invEqYen: 10991, evEqYen: -936, ev56Yen: -2013 },
+  { g: 100, tenjoRatePct:  4.91, hitDen: 379, invEqYen: 10924, evEqYen: -867, ev56Yen: -1944 },
+  { g: 150, tenjoRatePct:  5.57, hitDen: 376, invEqYen: 10848, evEqYen: -789, ev56Yen: -1866 },
+  { g: 200, tenjoRatePct:  6.31, hitDen: 373, invEqYen: 10763, evEqYen: -700, ev56Yen: -1778 },
+  { g: 250, tenjoRatePct:  7.16, hitDen: 370, invEqYen: 10666, evEqYen: -600, ev56Yen: -1678 },
+  { g: 300, tenjoRatePct:  8.11, hitDen: 366, invEqYen: 10556, evEqYen: -486, ev56Yen: -1565 },
+  { g: 350, tenjoRatePct:  9.20, hitDen: 362, invEqYen: 10431, evEqYen: -357, ev56Yen: -1436 },
+  { g: 400, tenjoRatePct: 10.43, hitDen: 357, invEqYen: 10290, evEqYen: -211, ev56Yen: -1291 },
+  { g: 450, tenjoRatePct: 11.82, hitDen: 351, invEqYen: 10129, evEqYen:  -45, ev56Yen: -1125 },
+  { g: 500, tenjoRatePct: 13.41, hitDen: 345, invEqYen:  9948, evEqYen:  143, ev56Yen:  -938 },
+  { g: 550, tenjoRatePct: 15.20, hitDen: 338, invEqYen:  9742, evEqYen:  357, ev56Yen:  -725 },
+  { g: 600, tenjoRatePct: 17.24, hitDen: 330, invEqYen:  9508, evEqYen:  598, ev56Yen:  -484 },
+  { g: 650, tenjoRatePct: 19.54, hitDen: 321, invEqYen:  9243, evEqYen:  873, ev56Yen:  -211 },
+  { g: 700, tenjoRatePct: 22.16, hitDen: 310, invEqYen:  8943, evEqYen: 1183, ev56Yen:    98 },
+  { g: 750, tenjoRatePct: 25.12, hitDen: 298, invEqYen:  8602, evEqYen: 1536, ev56Yen:   450 },
+  { g:1000, tenjoRatePct: 47.07, hitDen: 211, invEqYen:  6080, evEqYen: 4145, ev56Yen:  3049 },
+  { g:1050, tenjoRatePct: 53.37, hitDen: 186, invEqYen:  5357, evEqYen: 4893, ev56Yen:  3795 },
+  { g:1100, tenjoRatePct: 60.51, hitDen: 157, invEqYen:  4536, evEqYen: 5742, ev56Yen:  4641 },
+  { g:1150, tenjoRatePct: 68.61, hitDen: 125, invEqYen:  3606, evEqYen: 6705, ev56Yen:  5600 },
+];
+const TENJO_G = 1268;
+const KEY_PENDING = "hokuto_pending_run_v3_1";
+const KEY_HISTORY = "hokuto_history_v3_1";
+
+/** ====== DOM ====== */
+const elTabJudge = document.getElementById("tabJudge");
+const elTabRun = document.getElementById("tabRun");
+const elTabSummary = document.getElementById("tabSummary");
+
+const elJudge = document.getElementById("judge");
+const elRun = document.getElementById("run");
+const elSummary = document.getElementById("summary");
+
+const elG = document.getElementById("g");
+const elRateMode = document.getElementById("rateMode");
+const elSLine = document.getElementById("sLine");
+const elALine = document.getElementById("aLine");
+const elCoinHold = document.getElementById("coinHold");
+
+const elBtnCalc = document.getElementById("btnCalc");
+const elStartWrap = document.getElementById("startWrap");
+const elBtnStart = document.getElementById("btnStart");
+
+const elJudgeOut = document.getElementById("judgeOut");
+const elJudgeRank = document.getElementById("judgeRank");
+const elJudgeNote = document.getElementById("judgeNote");
+
+const elPendingInfo = document.getElementById("pendingInfo");
+const elInvestYen = document.getElementById("investYen");
+const elReturnCoins = document.getElementById("returnCoins");
+const elBtnSaveResult = document.getElementById("btnSaveResult");
+const elBtnClearPending = document.getElementById("btnClearPending");
+const elRunOut = document.getElementById("runOut");
+
+const elSummaryOut = document.getElementById("summaryOut");
+const elBtnExport = document.getElementById("btnExport");
+const elBtnClearAll = document.getElementById("btnClearAll");
+
+/** ====== UI ====== */
+function showTab(id){
+  elJudge.style.display = (id==="judge") ? "block" : "none";
+  elRun.style.display = (id==="run") ? "block" : "none";
+  elSummary.style.display = (id==="summary") ? "block" : "none";
+
+  elTabJudge.classList.toggle("active", id==="judge");
+  elTabRun.classList.toggle("active", id==="run");
+  elTabSummary.classList.toggle("active", id==="summary");
+
+  if(id==="run") renderPending();
+  if(id==="summary") renderSummary();
+}
+
+function fmtYen(n){
+  const s = Math.round(n).toLocaleString("ja-JP");
+  return (n >= 0 ? "+" : "") + s + "円";
+}
+function yenPerCoinLoan(mode){ return mode === "ne" ? (1000/46) : (1000/50); }
+function yenPerCoinCash(mode){ return mode === "ne" ? (1000/52) : (1000/50); }
+
+/** ====== 補間 ====== */
+function getInterpolatedRow(game){
+  if (game <= TABLE[0].g) return { ...TABLE[0], g: game, isInterpolated: false };
+  if (game >= TABLE[TABLE.length - 1].g) return { ...TABLE[TABLE.length - 1], g: game, isInterpolated: false };
+
+  let lo = TABLE[0], hi = TABLE[TABLE.length - 1];
+  for (let i = 0; i < TABLE.length - 1; i++){
+    const a = TABLE[i], b = TABLE[i+1];
+    if (a.g <= game && game <= b.g) { lo = a; hi = b; break; }
+  }
+  if (game === lo.g) return { ...lo, g: game, isInterpolated: false };
+  if (game === hi.g) return { ...hi, g: game, isInterpolated: false };
+
+  const t = (game - lo.g) / (hi.g - lo.g);
+  const lerp = (x, y) => x + (y - x) * t;
+  return {
+    g: game, isInterpolated: true, gLo: lo.g, gHi: hi.g,
+    tenjoRatePct: lerp(lo.tenjoRatePct, hi.tenjoRatePct),
+    hitDen:       lerp(lo.hitDen,       hi.hitDen),
+    invEqYen:     lerp(lo.invEqYen,     hi.invEqYen),
+    evEqYen:      lerp(lo.evEqYen,      hi.evEqYen),
+    ev56Yen:      lerp(lo.ev56Yen,      hi.ev56Yen),
+  };
+}
+
+/** ====== 店補正（等価→コイン→貸し/交換で再換算） ====== */
+function adjustToModeFromEq(invEqYen, evEqYen, mode){
+  const invCoins = invEqYen / 20.0;
+  const evCoins  = evEqYen  / 20.0;
+  const retCoins = invCoins + evCoins;
+
+  const invYen = invCoins * yenPerCoinLoan(mode);
+  const retYen = retCoins * yenPerCoinCash(mode);
+  const evYen  = retYen - invYen;
+  const ratePct = (retYen / invYen) * 100;
+
+  return { invYen, retYen, evYen, ratePct };
+}
+
+/** ====== 判定/コメント ====== */
+function commentByTenjoRatePct(pct){
+  if (pct < 10)  return "天井はまだ遠め。天井を強く意識すると深追いになりやすいから、期待値と投資のバランス優先でね。";
+  if (pct < 20)  return "天井はうっすら視野。『天井狙い』というより『期待値で打つ』イメージが安全。";
+  if (pct < 35)  return "天井も十分視野。展開次第で天井到達も現実的、気持ちはブレにくいゾーン。";
+  if (pct < 55)  return "天井期待はかなり強い。腰を据えて“取り切る前提”で打てるライン。";
+  return "天井がかなり現実的。ここまで来たら“天井までの覚悟”がそのまま価値になるよ。";
+}
+function rankByRate(ratePct, sLine, aLine){
+  if (ratePct >= sLine) return `S（${sLine}%↑：優先）`;
+  if (ratePct >= aLine) return `A（${aLine}〜${sLine}%：打つ）`;
+  if (ratePct >= 101)   return "B（101〜：状況次第）";
+  if (ratePct >= 100)   return "C（100〜：基本スルー）";
+  return "NG（100%未満：触らない）";
+}
+function deltaToNextLine(ratePct, sLine, aLine){
+  if (ratePct >= sLine) return { label: "S維持中", delta: 0 };
+  if (ratePct >= aLine) return { label: "Sまであと", delta: (sLine - ratePct) };
+  return { label: "Aまであと", delta: (aLine - ratePct) };
+}
+function expectedAddInvestmentYen(gameNow, hitDen, coinHold, mode){
+  const N = Math.max(0, TENJO_G - gameNow);
+  const p = 1 / hitDen;
+  const q = 1 - p;
+  const eg = (p > 0) ? (1 - Math.pow(q, N)) / p : N; // E[min(T,N)]
+  const coinsPerG = (coinHold > 0) ? (50 / coinHold) : 0;
+  const expYen = (eg * coinsPerG) * yenPerCoinLoan(mode);
+  const tenjoYen = (N * coinsPerG) * yenPerCoinLoan(mode);
+  return { expYen, tenjoYen };
+}
+
+/** ====== 保存 ====== */
+function getPending(){
+  const raw = localStorage.getItem(KEY_PENDING);
+  if(!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+function setPending(p){ localStorage.setItem(KEY_PENDING, JSON.stringify(p)); }
+function clearPending(){ localStorage.removeItem(KEY_PENDING); renderPending(); }
+
+function getHistory(){
+  const raw = localStorage.getItem(KEY_HISTORY);
+  if(!raw) return [];
+  try { return JSON.parse(raw); } catch { return []; }
+}
+function setHistory(h){ localStorage.setItem(KEY_HISTORY, JSON.stringify(h)); }
+
+/** ====== 判別 ====== */
+let lastCalc = null;
+
+function calcAndRender(){
+  const game = Number(elG.value);
+  if(!Number.isFinite(game)){ alert("ゲーム数を入れてね"); return; }
+
+  const mode = elRateMode.value;
+  const s = Number(elSLine.value);
+  const a = Number(elALine.value);
+  const ch = Number(elCoinHold.value);
+
+  const row = getInterpolatedRow(game);
+  const adj = adjustToModeFromEq(row.invEqYen, row.evEqYen, mode);
+  const d = deltaToNextLine(adj.ratePct, s, a);
+  const add = expectedAddInvestmentYen(game, row.hitDen, ch, mode);
+
+  lastCalc = {
+    game, mode, s, a, ch,
+    row, adj, d, add,
+    rank: rankByRate(adj.ratePct, s, a),
+    tenjoComment: commentByTenjoRatePct(row.tenjoRatePct),
+    cashYenPerCoin: yenPerCoinCash(mode),
+  };
+
+  elStartWrap.style.display = "block";
+
+  const refLabel = row.isInterpolated
+    ? `補間：${row.gLo}G〜${row.gHi}Gの間（入力 ${row.g}G）`
+    : `参照行：${row.g}G`;
+
+  elJudgeOut.innerHTML = `
+    <div class="row big"><b>${refLabel}</b>
+      <span class="pill">天井到達率 ${row.tenjoRatePct.toFixed(2)}%</span>
+      <span class="pill">実質初当たり 1/${Math.round(row.hitDen)}</span>
+    </div>
+
+    <div class="kpi">
+      <div class="box"><div class="t">機械割</div><div class="v">${adj.ratePct.toFixed(2)}%</div></div>
+      <div class="box"><div class="t">${d.label}</div><div class="v">${d.delta.toFixed(2)}%</div></div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="row">期待値（換算後）：<b>${fmtYen(adj.evYen)}</b></div>
+    <div class="row muted">（なな鉄・等価：期待値 ${fmtYen(row.evEqYen)} / 平均投資 ${Math.round(row.invEqYen).toLocaleString("ja-JP")}円）</div>
+
+    <div class="sep"></div>
+
+    <div class="row">平均追加投資（当たるor天井まで・概算）：<b>${fmtYen(add.expYen)}</b></div>
+    <div class="row">天井まで行った場合の追加投資（概算）：<b>${fmtYen(add.tenjoYen)}</b></div>
+  `;
+
+  elJudgeRank.textContent = lastCalc.rank;
+  elJudgeNote.textContent = `${lastCalc.tenjoComment}　（保存はされてないよ。稼働するなら下のボタンを押してね）`;
+}
+
+function saveAsPending(){
+  if(!lastCalc){ alert("先に判定してね"); return; }
+  const p = {
+    id:"run_"+Date.now(),
+    createdAt: Date.now(),
+    createdAtStr: new Date().toLocaleString(),
+    game: lastCalc.game,
+    mode: lastCalc.mode,
+    evYen: lastCalc.adj.evYen,
+    ratePct: lastCalc.adj.ratePct,
+    rank: lastCalc.rank,
+    tenjoRatePct: lastCalc.row.tenjoRatePct,
+    hitDen: lastCalc.row.hitDen,
+    cashYenPerCoin: lastCalc.cashYenPerCoin,
+  };
+  setPending(p);
+  showTab("run");
+}
+
+/** ====== 稼働結果 ====== */
+function renderPending(){
+  elInvestYen.value = "";
+  elReturnCoins.value = "";
+  elRunOut.textContent = "";
+
+  const p = getPending();
+  if(!p){
+    elPendingInfo.innerHTML = `<div class="big">保留なし</div><div class="muted">判別で計算→稼働するを押してね。</div>`;
+    return;
+  }
+  const modeLabel = (p.mode==="eq") ? "等価" : "非等価（46貸/52交）";
+  elPendingInfo.innerHTML = `
+    <div class="big">保留中：${modeLabel}</div>
+    <div class="row">日時：${p.createdAtStr}</div>
+    <div class="row">開始G：${p.game}G / ランク：<b>${p.rank}</b></div>
+    <div class="row">期待値：<b>${fmtYen(p.evYen)}</b> / 機械割：<b>${p.ratePct.toFixed(2)}%</b></div>
+  `;
+}
+
+function saveResult(){
+  const p = getPending();
+  if(!p){ alert("保留がないよ"); return; }
+
+  const invest = Number(elInvestYen.value);
+  const coins = Number(elReturnCoins.value);
+  if(!Number.isFinite(invest) || invest < 0){ alert("投資金額を入れてね"); return; }
+  if(!Number.isFinite(coins) || coins < 0){ alert("回収メダルを入れてね"); return; }
+
+  const cash = coins * p.cashYenPerCoin;
+  const diff = cash - invest;
+  const deltaVsEV = diff - p.evYen;
+
+  const entry = {
+    ...p,
+    finishedAt: Date.now(),
+    finishedAtStr: new Date().toLocaleString(),
+    investYen: invest,
+    returnCoins: coins,
+    returnYen: cash,
+    diffYen: diff,
+    deltaVsEVYen: deltaVsEV,
+  };
+
+  const h = getHistory();
+  h.push(entry);
+  setHistory(h);
+  clearPending();
+
+  elRunOut.innerHTML = `
+    <div class="row big">保存したよ</div>
+    <div class="row">回収：<b>${fmtYen(cash)}</b>（${coins}枚）</div>
+    <div class="row">差額：<b>${fmtYen(diff)}</b></div>
+    <div class="row">期待値：<b>${fmtYen(p.evYen)}</b></div>
+    <div class="row">期待値との差：<b>${fmtYen(deltaVsEV)}</b></div>
+  `;
+}
+
+/** ====== 履歴：編集/削除 ====== */
+function deleteOne(id){
+  if(!confirm("この履歴1件を削除する？")) return;
+  const h = getHistory().filter(x => x.id !== id);
+  setHistory(h);
+  renderSummary();
+}
+function editOne(id){
+  const h = getHistory();
+  const item = h.find(x => x.id === id);
+  if(!item) return;
+
+  const newInv = prompt("投資金額（円）を入力", String(item.investYen));
+  if(newInv === null) return;
+  const newCoins = prompt("回収メダル（枚）を入力", String(item.returnCoins));
+  if(newCoins === null) return;
+
+  const invest = Number(newInv);
+  const coins = Number(newCoins);
+  if(!Number.isFinite(invest) || invest < 0){ alert("投資金額が不正"); return; }
+  if(!Number.isFinite(coins) || coins < 0){ alert("回収枚数が不正"); return; }
+
+  item.investYen = invest;
+  item.returnCoins = coins;
+  item.returnYen = coins * item.cashYenPerCoin;
+  item.diffYen = item.returnYen - invest;
+  item.deltaVsEVYen = item.diffYen - item.evYen;
+
+  setHistory(h);
+  renderSummary();
+}
+
+/** ====== 累計表示 ====== */
+function renderSummary(){
+  const h = getHistory();
+  if(h.length === 0){
+    elSummaryOut.innerHTML = `<div class="big">履歴がまだないよ</div><div class="muted">判別→稼働→結果保存で溜まっていくよ。</div>`;
+    return;
+  }
+
+  let sumEV=0,sumInv=0,sumRet=0,sumCoins=0,sumDiff=0;
+  for(const r of h){
+    sumEV += r.evYen;
+    sumInv += r.investYen;
+    sumRet += r.returnYen;
+    sumCoins += r.returnCoins;
+    sumDiff += r.diffYen;
+  }
+  const sumDelta = sumDiff - sumEV;
+
+  const comment = (sumDelta < 0)
+    ? `期待値は積めてるね。いまは下振れ寄り（期待値との差 ${fmtYen(sumDelta)}）。AT中の下振れは普通にあるから、めげずに期待値を積めば収束していくよ！`
+    : `今は上振れ寄り（期待値との差 ${fmtYen(sumDelta)}）。基準を崩さず、同じ期待値を積み続けよう。`;
+
+  const rows = h.slice().reverse().map(r=>{
+    const modeLabel = (r.mode==="eq") ? "等価" : "非等価";
+    return `
+      <tr>
+        <td>${r.finishedAtStr}<br>
+          <div class="inline">
+            <button class="ghost" onclick="editOne('${r.id}')">編集</button>
+            <button class="danger" onclick="deleteOne('${r.id}')">削除</button>
+          </div>
+        </td>
+        <td>${modeLabel}</td>
+        <td>${r.game}G<br><span class="muted">${r.rank}</span></td>
+        <td>${fmtYen(r.evYen)}<br><span class="muted">${r.ratePct.toFixed(2)}%</span></td>
+        <td>${fmtYen(r.investYen)}</td>
+        <td>${Math.round(r.returnCoins)}枚</td>
+        <td>${fmtYen(r.returnYen)}</td>
+        <td>${fmtYen(r.diffYen)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  elSummaryOut.innerHTML = `
+    <div class="kpi">
+      <div class="box"><div class="t">累計期待値</div><div class="v">${fmtYen(sumEV)}</div></div>
+      <div class="box"><div class="t">累計差額（実収支）</div><div class="v">${fmtYen(sumDiff)}</div></div>
+      <div class="box"><div class="t">累計投資</div><div class="v">${fmtYen(sumInv)}</div></div>
+      <div class="box"><div class="t">累計回収</div><div class="v">${fmtYen(sumRet)}<div class="muted">（${Math.round(sumCoins)}枚）</div></div></div>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="row big">期待値との差（実収支 − 期待値）：${fmtYen(sumDelta)}</div>
+    <div class="muted">${comment}</div>
+
+    <div class="sep"></div>
+
+    <div class="row big">履歴（最新順）</div>
+    <table>
+      <thead>
+        <tr>
+          <th>日時/操作</th><th>交換率</th><th>開始G</th><th>期待値/機械割</th>
+          <th>投資</th><th>回収</th><th>回収円</th><th>差額</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+/** ====== 便利 ====== */
+function exportJson(){
+  alert(JSON.stringify(getHistory(), null, 2));
+}
+function clearAll(){
+  if(!confirm("全履歴を削除する？")) return;
+  localStorage.removeItem(KEY_HISTORY);
+  localStorage.removeItem(KEY_PENDING);
+  renderSummary();
+}
+
+/** ====== イベント登録（iPhoneでも確実） ====== */
+elTabJudge.addEventListener("click", () => showTab("judge"));
+elTabRun.addEventListener("click", () => showTab("run"));
+elTabSummary.addEventListener("click", () => showTab("summary"));
+
+elBtnCalc.addEventListener("click", calcAndRender);
+elBtnStart.addEventListener("click", saveAsPending);
+
+elBtnSaveResult.addEventListener("click", saveResult);
+elBtnClearPending.addEventListener("click", () => clearPending());
+
+elBtnExport.addEventListener("click", exportJson);
+elBtnClearAll.addEventListener("click", clearAll);
+
+/** 初期化：保留があるなら稼働結果へ */
+(function init(){
+  const p = getPending();
+  if(p) showTab("run");
+  else showTab("judge");
+})();
+</script>
+
+</body>
+</html>
